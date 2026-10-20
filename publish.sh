@@ -12,7 +12,7 @@
 # 四個區段來自各專案在 m6 上的 ipfs 產物，路徑可以用環境變數覆蓋。值也可以寫成 /ipfs/<CID>，
 # 直接拿 kubo 上已有的內容當那個區段（測試或退回時用，只能搭配 --stage 或正式發布）：
 #   SRC_ROOT     社群首頁 anoni-net/www，放在根目錄
-#   SRC_DOCS     文件站 anoni-net/docs，放在 /docs/
+#   SRC_DOCS     文件站 anoni-net/docs，放在 /docs/。沒有指定時從 S3 下載打包檔（DOCS_BUNDLE_URL）
 #   SRC_NEWS     新聞導讀 anoni-net/news，放在 /news/
 #   SRC_MYSTERY  隱私推理遊戲 anoni-net/privacy-mystery，放在 /mystery/
 #
@@ -28,8 +28,12 @@ set -eu
 BASE=${IPFS_MIRROR_BASE:-/home/ubuntu/app/ipfs-mirror}
 LOG=${IPFS_MIRROR_LOG:-/home/ubuntu/ipfs-mirror.log}
 SRC_ROOT=${SRC_ROOT:-/srv/anoni-net-www/current/ipfs}
-# 文件站在 GitHub Actions 建置，產物怎麼送到 m6 還沒決定（toomore/anoni-net-ws#422）
+# 文件站在 GitHub Actions 建置（anoni-net/docs 的 build_docs.yml 的 ipfs 那一格），打包放在 S3 的
+# docs-ipfs/。沒有指定 SRC_DOCS 時，每次執行先下載到 $BASE/docs，見下方 fetch_docs
+fetch_docs_enabled=0
+[ -z "${SRC_DOCS:-}" ] && fetch_docs_enabled=1
 SRC_DOCS=${SRC_DOCS:-$BASE/docs}
+DOCS_BUNDLE_URL=${DOCS_BUNDLE_URL:-https://ooni-research.s3.ap-northeast-1.amazonaws.com/docs-ipfs/docs-ipfs.tar.gz}
 SRC_NEWS=${SRC_NEWS:-/srv/anoni-net-news/ipfs}
 SRC_MYSTERY=${SRC_MYSTERY:-/srv/anoni-net-mystery/current/ipfs}
 SSH_HOST=${IPFS_SSH_HOST:-digital_sg_1_kubo}
@@ -65,6 +69,41 @@ flock -n 9 || { echo "上一輪還沒結束" >&2; exit 0; }
 
 log() { echo "$(date -Iseconds) $*" >>"$LOG"; }
 fail() { echo "$*" >&2; [ "$mode" = publish ] && log "$*"; exit 1; }
+
+# 文件站的打包檔：先讀 .sha256，跟上次解開的相同就不再下載。下載完核對 sha256，對得上才解開並
+# 換掉 $BASE/docs。走 S3 的 HTTPS 端點，物件是 public-read，不需要憑證。任何一步失敗都沿用
+# 上一份，正式發布時那一輪的文件站就停在上一版，下一輪再試
+note() { echo "$*"; [ "$mode" = publish ] && log "$*"; return 0; }
+fetch_docs() {
+    want=$(curl -fsS --max-time 30 "$DOCS_BUNDLE_URL.sha256" 2>/dev/null | cut -d' ' -f1) || want=""
+    if [ -z "$want" ]; then
+        note "讀不到文件站打包檔的 sha256，沿用上一份"
+        return 0
+    fi
+    [ "$(cat "$BASE/state/docs-bundle" 2>/dev/null)" = "$want" ] && [ -f "$BASE/docs/index.html" ] && return 0
+    tmp=$BASE/state/docs-bundle.tar.gz
+    if ! curl -fsS --max-time 900 -o "$tmp" "$DOCS_BUNDLE_URL"; then
+        note "文件站打包檔下載失敗，沿用上一份"
+        rm -f "$tmp"; return 0
+    fi
+    if [ "$(sha256sum "$tmp" | cut -d' ' -f1)" != "$want" ]; then
+        note "文件站打包檔的 sha256 對不上，沿用上一份"
+        rm -f "$tmp"; return 0
+    fi
+    rm -rf "$BASE/docs.tmp"
+    mkdir -p "$BASE/docs.tmp"
+    if ! tar -xzf "$tmp" -C "$BASE/docs.tmp" || [ ! -f "$BASE/docs.tmp/index.html" ]; then
+        note "文件站打包檔解不開或沒有 index.html，沿用上一份"
+        rm -rf "$BASE/docs.tmp" "$tmp"; return 0
+    fi
+    rm -rf "$BASE/docs.old"
+    [ -d "$BASE/docs" ] && mv "$BASE/docs" "$BASE/docs.old"
+    mv "$BASE/docs.tmp" "$BASE/docs"
+    rm -rf "$BASE/docs.old" "$tmp"
+    echo "$want" >"$BASE/state/docs-bundle"
+    note "更新文件站的產物（$(echo "$want" | cut -c1-12)）"
+}
+[ "$fetch_docs_enabled" = 1 ] && fetch_docs
 
 # 區段名稱、掛載點、來源
 SECTIONS="root:/:$SRC_ROOT docs:/docs:$SRC_DOCS news:/news:$SRC_NEWS mystery:/mystery:$SRC_MYSTERY"
