@@ -90,7 +90,7 @@ curl -sI -H "Host: <CID>.ipfs.localhost:8080" http://127.0.0.1:8080/tools/
 
 ## 狀態
 
-2026-10-21：社群首頁與 mystery 的 ipfs 產物已經在 m6 上產生，組裝與 `_redirects` 用 `--stage` 在 kubo 上測過。文件站與新聞導讀的 ipfs 目標還沒做，四個區段都齊了才會設定 crontab、正式發布。
+2026-10-21 第一次整站發布，四個區段都在，crontab 每天台北時間 04:17 執行。之後內容有變動的那一天才會換新的 CID。
 
 ## 授權
 
@@ -188,7 +188,7 @@ The gateway's nginx configuration is in the m6 config repository under `digital_
 
 ## Status
 
-2026-10-21: the home page and the mysteries produce their ipfs output on m6, and the assembly and `_redirects` have been tested on kubo with `--stage`. The ipfs targets for the docs site and the news digest are still to do; the crontab and the first full publish wait until all four sections are in place.
+2026-10-21: first full publish, with all four sections in place. The crontab runs every day at 04:17 Taipei time, and a new CID appears only on days when something has changed.
 
 ## License
 
